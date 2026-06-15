@@ -7,13 +7,15 @@ from sentence_transformers import SentenceTransformer
 
 from config import INDEX_DIR
 
-_MODEL_NAME = "all-MiniLM-L6-v2"
-_model: SentenceTransformer | None = None
 
-def _get_model() -> SentenceTransformer:
+_MODEL_NAME = "paraphrase-MiniLM-L3-v2"
+_model = None
+
+def _get_model():
     global _model
     if _model is None:
-        _model = SentenceTransformer(_MODEL_NAME)
+        _model = SentenceTransformer(_MODEL_NAME, device="cpu")
+        _model.max_seq_length = 128
     return _model
 
 def _index_path() -> Path:
