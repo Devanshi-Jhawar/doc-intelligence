@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 .env
+.env.txt
+*.env
+backend/.env
+backend/.env.txt
 backend/uploads/
 backend/pages/
 backend/indexes/
