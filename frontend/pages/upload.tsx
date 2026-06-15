@@ -69,18 +69,18 @@ function DocRow({ doc, onDelete }: { doc: Document; onDelete: (id: string) => vo
                 <p className="text-sm text-white capitalize">{value}</p>
               </div>
             ))}
-            {doc.classification.summary && (
-              <div className="col-span-2">
-                <p className="text-xs mb-0.5" style={{ color: "#8b92a5" }}>Summary</p>
-                <p className="text-sm" style={{ color: "#c4c9d4" }}>{String(doc.classification.summary)}</p>
-              </div>
-            )}
-            {doc.classification.sensitivity_reason && (
-              <div className="col-span-2">
-                <p className="text-xs mb-0.5" style={{ color: "#8b92a5" }}>Sensitivity reason</p>
-                <p className="text-sm" style={{ color: "#c4c9d4" }}>{String(doc.classification.sensitivity_reason)}</p>
-              </div>
-            )}
+            {!!doc.classification.summary && (
+  <div className="col-span-2">
+    <p className="text-xs mb-0.5" style={{ color: "#8b92a5" }}>Summary</p>
+    <p className="text-sm" style={{ color: "#c4c9d4" }}>{String(doc.classification.summary as string)}</p>
+  </div>
+)}
+{!!doc.classification.sensitivity_reason && (
+  <div className="col-span-2">
+    <p className="text-xs mb-0.5" style={{ color: "#8b92a5" }}>Sensitivity reason</p>
+    <p className="text-sm" style={{ color: "#c4c9d4" }}>{String(doc.classification.sensitivity_reason as string)}</p>
+  </div>
+)}
           </div>
         </div>
       )}
