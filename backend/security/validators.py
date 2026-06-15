@@ -2,7 +2,7 @@ import hashlib
 import re
 from pathlib import Path
 from fastapi import UploadFile, HTTPException
-import magic  # python-magic
+import filetype
 
 from config import ALLOWED_MIME_TYPES, ALLOWED_EXTENSIONS, MAX_FILE_SIZE, UPLOAD_DIR
 
@@ -33,12 +33,11 @@ async def validate_upload(file: UploadFile) -> bytes:
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"File type {suffix} not allowed.")
 
-    # magic-byte check (actual content vs claimed extension)
-    mime = magic.from_buffer(data[:2048], mime=True)
+    kind = filetype.guess(data[:2048])
+    mime = kind.mime if kind else "text/plain"
     if mime not in ALLOWED_MIME_TYPES:
-        # allow text/x-* variants for plain text
-        if not (mime.startswith("text/") and suffix == ".txt"):
-            raise HTTPException(400, f"File content type {mime} not allowed.")
+        if not (suffix == ".txt"):
+            raise HTTPException(status_code=400, detail=f"File content type {mime} not allowed.")
 
     return data
 
