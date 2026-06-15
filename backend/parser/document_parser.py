@@ -4,6 +4,9 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 import pdfplumber
+import pkgutil
+if not hasattr(pkgutil, 'find_loader'):
+    pkgutil.find_loader = lambda name: None
 import pytesseract
 from pdf2image import convert_from_path
 from PIL import Image
