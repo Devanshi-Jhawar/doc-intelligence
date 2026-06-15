@@ -1,41 +1,23 @@
 import json
 import pickle
 import numpy as np
-import faiss
 from pathlib import Path
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 from config import INDEX_DIR
 
+_INDEX_PATH = INDEX_DIR / "tfidf.pkl"
 
-_MODEL_NAME = "paraphrase-MiniLM-L3-v2"
-_model = None
-
-def _get_model():
-    global _model
-    if _model is None:
-        _model = SentenceTransformer(_MODEL_NAME, device="cpu")
-        _model.max_seq_length = 128
-    return _model
-
-def _index_path() -> Path:
-    return INDEX_DIR / "faiss.index"
-
-def _meta_path() -> Path:
-    return INDEX_DIR / "chunks_meta.pkl"
-
-def _load_index() -> tuple[faiss.IndexFlatL2 | None, list]:
-    if not _index_path().exists():
+def _load_index():
+    if not _INDEX_PATH.exists():
         return None, []
-    index = faiss.read_index(str(_index_path()))
-    with open(_meta_path(), "rb") as f:
-        meta = pickle.load(f)
-    return index, meta
+    with open(_INDEX_PATH, "rb") as f:
+        return pickle.load(f)
 
-def _save_index(index: faiss.IndexFlatL2, meta: list):
-    faiss.write_index(index, str(_index_path()))
-    with open(_meta_path(), "wb") as f:
-        pickle.dump(meta, f)
+def _save_index(vectorizer, matrix, meta):
+    with open(_INDEX_PATH, "wb") as f:
+        pickle.dump((vectorizer, matrix, meta), f)
 
 def _chunk_text(text: str, chunk_size: int = 400, overlap: int = 80) -> list[str]:
     words = text.split()
@@ -48,20 +30,23 @@ def _chunk_text(text: str, chunk_size: int = 400, overlap: int = 80) -> list[str
     return chunks
 
 def index_document(doc_id: str, filename: str, pages: list[dict]):
-    model = _get_model()
-    index, meta = _load_index()
+    result = _load_index()
+    if result[0] is None:
+        existing_meta = []
+        existing_texts = []
+    else:
+        _, _, existing_meta = result
+        existing_texts = [m["text"] for m in existing_meta]
 
-    all_chunks = []
-    all_metas = []
-
+    new_chunks = []
+    new_metas = []
     for page in pages:
-        page_text = page.get("text", "").strip()
-        if not page_text:
+        text = page.get("text", "").strip()
+        if not text:
             continue
-        chunks = _chunk_text(page_text)
-        for chunk in chunks:
-            all_chunks.append(chunk)
-            all_metas.append({
+        for chunk in _chunk_text(text):
+            new_chunks.append(chunk)
+            new_metas.append({
                 "doc_id": doc_id,
                 "filename": filename,
                 "page_num": page["page_num"],
@@ -69,60 +54,48 @@ def index_document(doc_id: str, filename: str, pages: list[dict]):
                 "text": chunk,
             })
 
-    if not all_chunks:
+    if not new_chunks:
         return
 
-    embeddings = model.encode(all_chunks, show_progress_bar=False).astype("float32")
-    dim = embeddings.shape[1]
+    all_texts = existing_texts + new_chunks
+    all_meta = existing_meta + new_metas
 
-    if index is None:
-        index = faiss.IndexFlatL2(dim)
-
-    index.add(embeddings)
-    meta.extend(all_metas)
-    _save_index(index, meta)
+    vectorizer = TfidfVectorizer(max_features=10000, stop_words="english")
+    matrix = vectorizer.fit_transform(all_texts)
+    _save_index(vectorizer, matrix, all_meta)
 
 def search(query: str, top_k: int = 5) -> list[dict]:
-    index, meta = _load_index()
-    if index is None or index.ntotal == 0:
+    result = _load_index()
+    if result[0] is None:
         return []
+    vectorizer, matrix, meta = result
 
-    model = _get_model()
-    q_emb = model.encode([query]).astype("float32")
-    distances, indices = index.search(q_emb, min(top_k, index.ntotal))
+    q_vec = vectorizer.transform([query])
+    scores = cosine_similarity(q_vec, matrix)[0]
+    top_indices = np.argsort(scores)[::-1][:top_k * 2]
 
-    results = []
-    for dist, idx in zip(distances[0], indices[0]):
-        if idx < 0:
-            continue
-        chunk_meta = meta[idx].copy()
-        chunk_meta["score"] = float(1 / (1 + dist))  # normalize to 0-1
-        results.append(chunk_meta)
-
-    # dedupe by (doc_id, page_num) keeping best score
     seen = {}
-    for r in results:
-        key = (r["doc_id"], r["page_num"])
-        if key not in seen or r["score"] > seen[key]["score"]:
-            seen[key] = r
-    return list(seen.values())
+    for idx in top_indices:
+        if scores[idx] < 0.01:
+            continue
+        m = meta[idx].copy()
+        m["score"] = float(scores[idx])
+        key = (m["doc_id"], m["page_num"])
+        if key not in seen or m["score"] > seen[key]["score"]:
+            seen[key] = m
+
+    return list(seen.values())[:top_k]
 
 def remove_document(doc_id: str):
-    # FAISS flat index doesn't support deletion, so rebuild without that doc
-    index, meta = _load_index()
-    if index is None:
+    result = _load_index()
+    if result[0] is None:
         return
-
-    keep_meta = [m for m in meta if m["doc_id"] != doc_id]
-    if not keep_meta:
-        _index_path().unlink(missing_ok=True)
-        _meta_path().unlink(missing_ok=True)
+    _, _, meta = result
+    keep = [m for m in meta if m["doc_id"] != doc_id]
+    if not keep:
+        _INDEX_PATH.unlink(missing_ok=True)
         return
-
-    model = _get_model()
-    texts = [m["text"] for m in keep_meta]
-    embeddings = model.encode(texts, show_progress_bar=False).astype("float32")
-    dim = embeddings.shape[1]
-    new_index = faiss.IndexFlatL2(dim)
-    new_index.add(embeddings)
-    _save_index(new_index, keep_meta)
+    texts = [m["text"] for m in keep]
+    vectorizer = TfidfVectorizer(max_features=10000, stop_words="english")
+    matrix = vectorizer.fit_transform(texts)
+    _save_index(vectorizer, matrix, keep)
